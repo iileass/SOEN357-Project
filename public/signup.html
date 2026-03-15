@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Create Account — Sync-Up</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body class="auth-page">
+
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="auth-logo-icon">
+        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+        </svg>
+      </div>
+      <span class="auth-logo-text">Sync-Up</span>
+    </div>
+
+    <h1 class="auth-title">Create your account</h1>
+    <p class="auth-subtitle">Start managing projects in seconds</p>
+
+    <div id="authError" class="auth-error"></div>
+
+    <form id="signupForm" class="auth-form" novalidate>
+      <div class="name-row">
+        <div class="form-group">
+          <label class="form-label" for="firstName">First name</label>
+          <input id="firstName" type="text" class="form-input" placeholder="Jane" required autocomplete="given-name" />
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="lastName">Last name</label>
+          <input id="lastName" type="text" class="form-input" placeholder="Doe" required autocomplete="family-name" />
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="email">Email address</label>
+        <input id="email" type="email" class="form-input" placeholder="you@example.com" required autocomplete="email" />
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="password">Password</label>
+        <input id="password" type="password" class="form-input" placeholder="Min. 8 characters" required autocomplete="new-password" />
+        <span class="form-hint">Must be at least 8 characters.</span>
+      </div>
+
+      <button type="submit" id="submitBtn" class="btn btn-primary btn-lg auth-submit w-full">
+        Create account
+      </button>
+    </form>
+
+    <p class="auth-footer">
+      Already have an account? <a href="login.html">Sign in</a>
+    </p>
+  </div>
+
+  <script type="module">
+    import { redirectIfAuthed, register } from "./js/auth.js";
+
+    redirectIfAuthed();
+
+    const form      = document.getElementById("signupForm");
+    const errorBox  = document.getElementById("authError");
+    const submitBtn = document.getElementById("submitBtn");
+
+    function showError(msg) { errorBox.textContent = msg; errorBox.classList.add("visible"); }
+    function clearError()   { errorBox.classList.remove("visible"); }
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      clearError();
+
+      const firstName = document.getElementById("firstName").value.trim();
+      const lastName  = document.getElementById("lastName").value.trim();
+      const email     = document.getElementById("email").value.trim();
+      const password  = document.getElementById("password").value;
+
+      if (!firstName || !lastName || !email || !password) {
+        showError("Please fill in all fields."); return;
+      }
+      if (password.length < 8) {
+        showError("Password must be at least 8 characters."); return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Creating account…";
+
+      try {
+        await register(email, password, firstName, lastName);
+        window.location.href = "/dashboard.html";
+      } catch (err) {
+        const map = {
+          "auth/email-already-in-use": "An account with this email already exists.",
+          "auth/invalid-email":        "Please enter a valid email address.",
+          "auth/weak-password":        "Password is too weak. Choose a stronger one.",
+        };
+        showError(map[err.code] || "Sign-up failed. Please try again.");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Create account";
+      }
+    });
+  </script>
+</body>
+</html>

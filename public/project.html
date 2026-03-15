@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Project — Sync-Up</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+<div class="app-layout">
+
+  <!-- ═══════════════ SIDEBAR ═══════════════ -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-icon">
+        <svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      </div>
+      <span class="sidebar-logo-text">Sync-Up</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a href="dashboard.html" class="sidebar-nav-item">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+        </svg>
+        Dashboard
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="sidebar-user">
+        <div class="avatar" id="userAvatar">?</div>
+        <div class="sidebar-user-info">
+          <div class="sidebar-user-name" id="userName">Loading…</div>
+          <div class="sidebar-user-email" id="userEmail"></div>
+        </div>
+      </div>
+      <button class="sidebar-logout" id="logoutBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+          <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+        </svg>
+        Sign out
+      </button>
+    </div>
+  </aside>
+
+  <!-- ═══════════════ MAIN CONTENT ═══════════════ -->
+  <div class="main-content">
+    <header class="page-header">
+      <div class="page-header-left">
+        <div class="breadcrumb">
+          <a href="dashboard.html">Projects</a>
+          <span class="breadcrumb-sep">›</span>
+          <span class="current" id="breadcrumbTitle">Loading…</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:.5rem;align-items:center;">
+        <span id="projectDueLabel" class="deadline ok" style="margin-right:.5rem"></span>
+        <button class="btn btn-secondary btn-sm" id="editProjectBtn">Edit</button>
+      </div>
+    </header>
+
+    <main class="page-body">
+      <!-- Project overview bar -->
+      <div id="projectOverview" class="card mb-4" style="display:none;">
+        <div class="card-body">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
+            <div style="flex:1;min-width:0;">
+              <h2 id="projectTitle" style="margin-bottom:.375rem;"></h2>
+              <p id="projectDesc" class="text-secondary text-sm"></p>
+            </div>
+            <div class="stats-grid" style="flex:0 0 auto;margin-bottom:0;">
+              <div class="stat-card">
+                <div class="stat-value" id="statTasks">0</div>
+                <div class="stat-label">Tasks done</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="statMilestones">0</div>
+                <div class="stat-label">Milestones</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" id="statMembers">0</div>
+                <div class="stat-label">Members</div>
+              </div>
+            </div>
+          </div>
+          <div class="progress-wrap mt-4">
+            <div class="progress-label">
+              <span class="text-sm font-medium">Overall progress</span>
+              <span class="text-sm font-semibold" id="progressPct">0%</span>
+            </div>
+            <div class="progress-bar" style="height:8px;">
+              <div class="progress-fill" id="progressFill" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="tasks">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 11 12 14 22 4"/>
+            <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+          </svg>
+          Tasks <span class="tab-count" id="taskCount">0</span>
+        </button>
+        <button class="tab-btn" data-tab="milestones">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+            <path d="M13 13l6 6"/>
+          </svg>
+          Milestones <span class="tab-count" id="milestoneCount">0</span>
+        </button>
+        <button class="tab-btn" data-tab="members">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>
+          </svg>
+          Members <span class="tab-count" id="memberCount">0</span>
+        </button>
+      </div>
+
+      <!-- Tasks Panel -->
+      <div class="tab-panel active" id="panel-tasks">
+        <div class="section-header">
+          <h3 class="section-title">Project Tasks</h3>
+          <button class="btn btn-primary btn-sm" id="newTaskBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add Task
+          </button>
+        </div>
+        <div id="taskList" class="item-list">
+          <div class="page-loader"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <!-- Milestones Panel -->
+      <div class="tab-panel" id="panel-milestones">
+        <div class="section-header">
+          <h3 class="section-title">Milestones</h3>
+          <button class="btn btn-primary btn-sm" id="newMilestoneBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add Milestone
+          </button>
+        </div>
+        <div id="milestoneList" class="item-list">
+          <div class="page-loader"><div class="spinner"></div></div>
+        </div>
+      </div>
+
+      <!-- Members Panel -->
+      <div class="tab-panel" id="panel-members">
+        <div class="section-header">
+          <h3 class="section-title">Team Members</h3>
+          <button class="btn btn-primary btn-sm" id="addMemberBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add Member
+          </button>
+        </div>
+        <div id="membersList" class="members-list">
+          <div class="page-loader"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ═══════════════ EDIT PROJECT MODAL ═══════════════ -->
+<div class="modal-overlay" id="editProjectModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title">Edit Project</h2>
+      <button class="modal-close" data-close="editProjectModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Title</label>
+        <input id="editProjTitle" type="text" class="form-input" maxlength="80" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <textarea id="editProjDesc" class="form-textarea"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Due date</label>
+        <input id="editProjDue" type="date" class="form-input" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Progress (%)</label>
+        <input id="editProjProgress" type="number" class="form-input" min="0" max="100" />
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="editProjectModal">Cancel</button>
+      <button class="btn btn-primary" id="saveProjectBtn">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ NEW TASK MODAL ═══════════════ -->
+<div class="modal-overlay" id="newTaskModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title" id="taskModalTitle">New Task</h2>
+      <button class="modal-close" data-close="newTaskModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Task title <span style="color:var(--danger)">*</span></label>
+        <input id="taskTitle" type="text" class="form-input" placeholder="e.g. Design homepage mockup" maxlength="120" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <textarea id="taskDesc" class="form-textarea" placeholder="Optional details…"></textarea>
+      </div>
+      <div id="taskError" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="newTaskModal">Cancel</button>
+      <button class="btn btn-primary" id="createTaskBtn">Add Task</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ NEW MILESTONE MODAL ═══════════════ -->
+<div class="modal-overlay" id="newMilestoneModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title">New Milestone</h2>
+      <button class="modal-close" data-close="newMilestoneModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Milestone title <span style="color:var(--danger)">*</span></label>
+        <input id="msTitle" type="text" class="form-input" placeholder="e.g. Phase 1 complete" maxlength="120" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <textarea id="msDesc" class="form-textarea" placeholder="What does this milestone represent?"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Expected end date</label>
+        <input id="msEndDate" type="date" class="form-input" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Progress (%)</label>
+        <input id="msProgress" type="number" class="form-input" min="0" max="100" value="0" />
+      </div>
+      <div id="msError" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="newMilestoneModal">Cancel</button>
+      <button class="btn btn-primary" id="createMilestoneBtn">Add Milestone</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ ADD MEMBER MODAL ═══════════════ -->
+<div class="modal-overlay" id="addMemberModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title">Add Member</h2>
+      <button class="modal-close" data-close="addMemberModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Member email <span style="color:var(--danger)">*</span></label>
+        <input id="memberEmail" type="email" class="form-input" placeholder="colleague@example.com" />
+        <span class="form-hint">The person must already have a Sync-Up account.</span>
+      </div>
+      <div id="memberLookupResult" style="display:none;" class="card" style="padding:.75rem;">
+        <div class="card-body" style="padding:.875rem;">
+          <div style="display:flex;align-items:center;gap:.75rem;">
+            <div class="avatar" id="memberPreviewAvatar">?</div>
+            <div>
+              <div class="font-semibold text-sm" id="memberPreviewName"></div>
+              <div class="text-xs text-secondary" id="memberPreviewEmail"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="memberError" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="addMemberModal">Cancel</button>
+      <button class="btn btn-secondary" id="lookupMemberBtn">Look up</button>
+      <button class="btn btn-primary" id="confirmAddMemberBtn" style="display:none">Add Member</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ MILESTONE TASK MODAL ═══════════════ -->
+<div class="modal-overlay" id="msTaskModal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 class="modal-title">Add Milestone Task</h2>
+      <button class="modal-close" data-close="msTaskModal">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Task title <span style="color:var(--danger)">*</span></label>
+        <input id="msTaskTitle" type="text" class="form-input" placeholder="e.g. Write unit tests" maxlength="120" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Description</label>
+        <textarea id="msTaskDesc" class="form-textarea" placeholder="Optional details…"></textarea>
+      </div>
+      <div id="msTaskError" class="form-error" style="display:none"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close="msTaskModal">Cancel</button>
+      <button class="btn btn-primary" id="createMsTaskBtn">Add Task</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<script type="module" src="js/project.js"></script>
+</body>
+</html>
