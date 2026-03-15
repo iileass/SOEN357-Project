@@ -191,10 +191,6 @@
         <label class="form-label">Due date</label>
         <input id="editProjDue" type="date" class="form-input" />
       </div>
-      <div class="form-group">
-        <label class="form-label">Progress (%)</label>
-        <input id="editProjProgress" type="number" class="form-input" min="0" max="100" />
-      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" data-close="editProjectModal">Cancel</button>
@@ -220,6 +216,12 @@
       <div class="form-group">
         <label class="form-label">Description</label>
         <textarea id="taskDesc" class="form-textarea" placeholder="Optional details…"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Assign to</label>
+        <select id="taskAssignee" class="form-select">
+          <option value="">Unassigned</option>
+        </select>
       </div>
       <div id="taskError" class="form-error" style="display:none"></div>
     </div>
@@ -251,10 +253,6 @@
       <div class="form-group">
         <label class="form-label">Expected end date</label>
         <input id="msEndDate" type="date" class="form-input" />
-      </div>
-      <div class="form-group">
-        <label class="form-label">Progress (%)</label>
-        <input id="msProgress" type="number" class="form-input" min="0" max="100" value="0" />
       </div>
       <div id="msError" class="form-error" style="display:none"></div>
     </div>
@@ -318,6 +316,12 @@
       <div class="form-group">
         <label class="form-label">Description</label>
         <textarea id="msTaskDesc" class="form-textarea" placeholder="Optional details…"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Assign to</label>
+        <select id="msTaskAssignee" class="form-select">
+          <option value="">Unassigned</option>
+        </select>
       </div>
       <div id="msTaskError" class="form-error" style="display:none"></div>
     </div>
