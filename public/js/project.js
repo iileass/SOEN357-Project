@@ -82,18 +82,32 @@ async function recalcMilestoneProgress(msId) {
   return pct;
 }
 
-// Recalculates the project's overall progress from project-level tasks and updates Firestore + UI.
+// Recalculates the project's overall progress from ALL tasks (project-level + milestone sub-tasks)
+// and updates Firestore + the overview progress bar.
 async function recalcProjectProgress() {
-  const snap  = await getDocs(tasksCol());
-  const tasks = snap.docs.map(d => d.data());
-  const pct   = tasks.length ? Math.round(tasks.filter(t => t.complete).length / tasks.length * 100) : 0;
+  // Project-level tasks
+  const projTaskSnap = await getDocs(tasksCol());
+  const projTasks    = projTaskSnap.docs.map(d => d.data());
+
+  // Milestone sub-tasks (fetch each milestone's task collection)
+  const msSnap = await getDocs(msCol());
+  let msTasks  = [];
+  for (const msDoc of msSnap.docs) {
+    const msTaskSnap = await getDocs(msTasksCol(msDoc.id));
+    msTasks = msTasks.concat(msTaskSnap.docs.map(d => d.data()));
+  }
+
+  const all = [...projTasks, ...msTasks];
+  const pct = all.length ? Math.round(all.filter(t => t.complete).length / all.length * 100) : 0;
+
   await updateDoc(projRef(), { progress: pct });
   if (projectData) projectData.progress = pct;
+
   // Update overview bar inline (no full reload needed)
   document.getElementById("progressPct").textContent = `${pct}%`;
   const fill = document.getElementById("progressFill");
-  fill.style.width  = `${pct}%`;
-  fill.className    = `progress-fill ${progressColor(pct)}`;
+  fill.style.width = `${pct}%`;
+  fill.className   = `progress-fill ${progressColor(pct)}`;
 }
 
 // ── Open-milestone state helpers ───────────────────────────────────────────────
@@ -162,7 +176,7 @@ async function init() {
   document.getElementById("editProjectBtn").addEventListener("click",     openEditModal);
   document.getElementById("saveProjectBtn").addEventListener("click",     saveProject);
   document.getElementById("newTaskBtn").addEventListener("click",         openNewTaskModal);
-  document.getElementById("createTaskBtn").addEventListener("click",      createTask);
+  document.getElementById("createTaskBtn").onclick = createTask;
   document.getElementById("newMilestoneBtn").addEventListener("click",    openNewMilestoneModal);
   document.getElementById("createMilestoneBtn").addEventListener("click", createMilestone);
   document.getElementById("addMemberBtn").addEventListener("click",       openAddMemberModal);
@@ -375,8 +389,7 @@ function resetTaskModal() {
   document.getElementById("taskTitle").closest(".form-group").style.display = "";
   document.getElementById("taskDesc").closest(".form-group").style.display  = "";
   document.getElementById("createTaskBtn").textContent = "Add Task";
-  document.getElementById("createTaskBtn").onclick = null;
-  document.getElementById("createTaskBtn").addEventListener("click", createTask);
+  document.getElementById("createTaskBtn").onclick = createTask; // single assignment — no stacking
 }
 
 // ── Milestones ─────────────────────────────────────────────────────────────────
@@ -594,8 +607,9 @@ async function createMilestoneTask() {
     closeModal("msTaskModal");
     showToast("Task added!");
 
-    // Recalculate progress and reload, ensuring this milestone stays open.
+    // Recalculate progress (milestone + overall) and reload, keeping this milestone open.
     await recalcMilestoneProgress(msId);
+    await recalcProjectProgress();
     const openSet = getOpenMilestones();
     openSet.add(msId);          // keep the target milestone open
     await loadMilestones(openSet);
@@ -608,8 +622,9 @@ async function toggleMilestoneTask(msId, taskId) {
   const snap = await getDoc(ref);
   if (!snap.exists()) return;
   await updateDoc(ref, { complete: !snap.data().complete });
-  // Recalculate milestone progress, then reload preserving open state.
+  // Recalculate milestone + overall progress, then reload preserving open state.
   await recalcMilestoneProgress(msId);
+  await recalcProjectProgress();
   await loadMilestones(); // getOpenMilestones() called inside will capture current DOM state
 }
 
@@ -617,6 +632,7 @@ async function deleteMilestoneTask(msId, taskId) {
   await deleteDoc(doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones", msId, "tasks", taskId));
   showToast("Task deleted.", "error");
   await recalcMilestoneProgress(msId);
+  await recalcProjectProgress();
   await loadMilestones();
 }
 
