@@ -19,9 +19,15 @@ function showToast(msg, type = "success") {
   setTimeout(() => toast.remove(), 3000);
 }
 
+function parseDate(d) {
+  if (!d) return null;
+  // Append time to force local-timezone parsing (avoid UTC midnight off-by-one)
+  return new Date(d + "T00:00:00");
+}
+
 function deadlineClass(dateStr) {
   if (!dateStr) return "";
-  const diff = (new Date(dateStr) - new Date()) / 86400000;
+  const diff = (parseDate(dateStr) - new Date()) / 86400000;
   if (diff < 0)  return "overdue";
   if (diff < 7)  return "soon";
   return "ok";
@@ -29,7 +35,7 @@ function deadlineClass(dateStr) {
 
 function deadlineLabel(dateStr) {
   if (!dateStr) return "";
-  const date = new Date(dateStr);
+  const date = parseDate(dateStr);
   const diff = Math.ceil((date - new Date()) / 86400000);
   if (diff < 0)  return `${Math.abs(diff)}d overdue`;
   if (diff === 0) return "Due today";
@@ -68,12 +74,23 @@ async function init() {
   // Logout
   document.getElementById("logoutBtn").addEventListener("click", logout);
 
+  // Color swatch picker listeners
+  document.querySelectorAll("#projColorPicker .color-swatch").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#projColorPicker .color-swatch").forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+    });
+  });
+
   // Open new-project modal
   document.getElementById("newProjectBtn").addEventListener("click", () => {
     document.getElementById("projTitle").value = "";
     document.getElementById("projDesc").value  = "";
     document.getElementById("projDue").value   = "";
     hideError("projError");
+    // Reset color picker to default
+    document.querySelectorAll("#projColorPicker .color-swatch").forEach(b => b.classList.remove("selected"));
+    document.querySelector("#projColorPicker .color-swatch[data-color='#5B6AF5']").classList.add("selected");
     openModal("newProjectModal");
   });
 
@@ -186,7 +203,7 @@ function renderProjects(grid, projects) {
     const ownerUid = p.ownerUid || currentUser.uid;
 
     return `
-      <div class="project-card" onclick="openProject('${p.id}','${ownerUid}')">
+      <div class="project-card" onclick="openProject('${p.id}','${ownerUid}','${p.color || '#5B6AF5'}')" style="border-top: 3px solid ${p.color || '#5B6AF5'};">
         <div class="project-card-header">
           <div style="display:flex;align-items:center;gap:.4rem;flex:1;min-width:0;">
             ${p.isShared ? `<span class="badge badge-gray" style="font-size:.7rem;margin-right:.25rem;">Shared</span>` : ""}
@@ -258,6 +275,7 @@ async function createProject() {
   const title = document.getElementById("projTitle").value.trim();
   const desc  = document.getElementById("projDesc").value.trim();
   const due   = document.getElementById("projDue").value;
+  const color = document.querySelector("#projColorPicker .color-swatch.selected")?.dataset.color || "#5B6AF5";
 
   if (!title) { showError("projError", "Project title is required."); return; }
 
@@ -272,6 +290,7 @@ async function createProject() {
       dueDate: due || null,
       progress: 0,
       ownerId: currentUser.uid,
+      color,
       createdAt: serverTimestamp(),
     });
     closeModal("newProjectModal");
@@ -317,8 +336,9 @@ async function confirmDelete() {
 
 // ── Open Project ──────────────────────────────────────────────────────────────
 
-function openProject(projectId, ownerUid) {
-  window.location.href = `project.html?id=${projectId}&owner=${ownerUid || currentUser.uid}`;
+function openProject(projectId, ownerUid, color) {
+  const c = encodeURIComponent(color || "#5B6AF5");
+  window.location.href = `project.html?id=${projectId}&owner=${ownerUid || currentUser.uid}&color=${c}`;
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

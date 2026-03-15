@@ -129,6 +129,12 @@
           </svg>
           Members <span class="tab-count" id="memberCount">0</span>
         </button>
+        <button class="tab-btn" data-tab="timeline">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+          Timeline
+        </button>
       </div>
 
       <!-- Tasks Panel -->
@@ -172,6 +178,31 @@
           <div class="page-loader"><div class="spinner"></div></div>
         </div>
       </div>
+
+      <!-- Timeline Panel -->
+      <div class="tab-panel" id="panel-timeline">
+        <div class="section-header">
+          <h3 class="section-title">Milestone Timeline</h3>
+          <div style="display:flex;gap:.5rem;">
+            <button class="btn btn-secondary btn-sm" id="tlZoomIn" title="Zoom in">+</button>
+            <button class="btn btn-secondary btn-sm" id="tlZoomOut" title="Zoom out">−</button>
+            <button class="btn btn-secondary btn-sm" id="tlReset" title="Reset view">Reset</button>
+          </div>
+        </div>
+        <div id="timelineContainer" style="width:100%;height:520px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg);overflow:hidden;position:relative;">
+          <svg id="timelineSvg" width="100%" height="100%" style="display:block;cursor:grab;">
+            <defs>
+              <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                <polygon points="0 0, 10 3.5, 0 7" fill="#94A3B8"/>
+              </marker>
+            </defs>
+            <g id="timelineCanvas"></g>
+          </svg>
+          <div id="timelineEmpty" style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;color:var(--text-secondary);font-size:.9rem;pointer-events:none;">
+            No milestones yet — add milestones to see the timeline.
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 </div>
@@ -189,6 +220,19 @@
       <div class="form-group">
         <label class="form-label">Title</label>
         <input id="editProjTitle" type="text" class="form-input" maxlength="80" />
+      </div>
+      <div class="form-group">
+        <label class="form-label">Color</label>
+        <div class="color-swatches" id="editProjColorPicker">
+          <button type="button" class="color-swatch selected" data-color="#5B6AF5" style="background:#5B6AF5;" title="Indigo"></button>
+          <button type="button" class="color-swatch" data-color="#0EA5E9" style="background:#0EA5E9;" title="Sky"></button>
+          <button type="button" class="color-swatch" data-color="#10B981" style="background:#10B981;" title="Emerald"></button>
+          <button type="button" class="color-swatch" data-color="#F59E0B" style="background:#F59E0B;" title="Amber"></button>
+          <button type="button" class="color-swatch" data-color="#EF4444" style="background:#EF4444;" title="Red"></button>
+          <button type="button" class="color-swatch" data-color="#8B5CF6" style="background:#8B5CF6;" title="Violet"></button>
+          <button type="button" class="color-swatch" data-color="#EC4899" style="background:#EC4899;" title="Pink"></button>
+          <button type="button" class="color-swatch" data-color="#64748B" style="background:#64748B;" title="Slate"></button>
+        </div>
       </div>
       <div class="form-group">
         <label class="form-label">Description</label>

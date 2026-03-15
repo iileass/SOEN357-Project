@@ -11,28 +11,33 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == userId;
 
       // ── Projects ────────────────────────────────────────────
-      // Project owner has full access.
-      // Members (listed in the project's members subcollection) can read.
+      // Any authenticated user can READ project data (needed for shared project access).
+      // Only the project owner can WRITE.
       match /projects/{projectId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read:  if request.auth != null;
+        allow write: if request.auth != null && request.auth.uid == userId;
 
         // ── Tasks ──────────────────────────────────────────────
         match /tasks/{taskId} {
-          allow read, write: if request.auth != null && request.auth.uid == userId;
+          allow read:  if request.auth != null;
+          allow write: if request.auth != null && request.auth.uid == userId;
         }
 
         // ── Milestones ─────────────────────────────────────────
         match /milestones/{milestoneId} {
-          allow read, write: if request.auth != null && request.auth.uid == userId;
+          allow read:  if request.auth != null;
+          allow write: if request.auth != null && request.auth.uid == userId;
 
           match /tasks/{taskId} {
-            allow read, write: if request.auth != null && request.auth.uid == userId;
+            allow read:  if request.auth != null;
+            allow write: if request.auth != null && request.auth.uid == userId;
           }
         }
 
         // ── Members ────────────────────────────────────────────
         match /members/{memberId} {
-          allow read, write: if request.auth != null && request.auth.uid == userId;
+          allow read:  if request.auth != null;
+          allow write: if request.auth != null && request.auth.uid == userId;
         }
       }
 

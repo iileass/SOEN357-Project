@@ -6,9 +6,10 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // ── URL params ─────────────────────────────────────────────────────────────────
-const params     = new URLSearchParams(window.location.search);
-const PROJECT_ID = params.get("id");
-const OWNER_UID  = params.get("owner");
+const params         = new URLSearchParams(window.location.search);
+const PROJECT_ID     = params.get("id");
+const OWNER_UID      = params.get("owner");
+const PROJECT_COLOR  = decodeURIComponent(params.get("color") || "%235B6AF5");
 
 // ── State ──────────────────────────────────────────────────────────────────────
 let currentUser    = null;
@@ -51,15 +52,21 @@ function initials(name) {
   return name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
+function parseDate(d) {
+  if (!d) return null;
+  // Append time to force local-timezone parsing (avoid UTC midnight off-by-one)
+  return new Date(d + "T00:00:00");
+}
+
 function deadlineClass(d) {
   if (!d) return "ok";
-  const diff = (new Date(d) - new Date()) / 86400000;
+  const diff = (parseDate(d) - new Date()) / 86400000;
   return diff < 0 ? "overdue" : diff < 7 ? "soon" : "ok";
 }
 
 function deadlineLabel(d) {
   if (!d) return "";
-  const date = new Date(d);
+  const date = parseDate(d);
   const diff = Math.ceil((date - new Date()) / 86400000);
   if (diff < 0)   return `${Math.abs(diff)}d overdue`;
   if (diff === 0) return "Due today";
@@ -154,6 +161,9 @@ function getCheckedAssignees(containerId) {
 async function init() {
   if (!PROJECT_ID || !OWNER_UID) { window.location.href = "/dashboard.html"; return; }
 
+  // Apply project accent color early
+  document.documentElement.style.setProperty("--primary", PROJECT_COLOR);
+
   currentUser = await requireAuth();
 
   const profile = await getUserProfile(currentUser.uid);
@@ -194,6 +204,7 @@ async function init() {
   document.getElementById("saveMilestoneBtn").addEventListener("click", saveMilestone);
 
   await loadProject();
+  initTimelineControls();
   await loadMembers();   // must run before loadTasks so projectMembers cache is ready
   await loadTasks();
   await loadMilestones();
@@ -358,10 +369,19 @@ async function deleteTask(taskId) {
 
 // ── Inline assign (project tasks) ─────────────────────────────────────────────
 
-function openAssignModal(taskId) {
+async function openAssignModal(taskId) {
   if (!projectMembers.length) { showToast("No members to assign.", "error"); return; }
   assignTargetId = taskId;
-  populateMemberChecklists([]);
+  // Fetch current assignees to pre-check them
+  let currentAssigneeIds = [];
+  try {
+    const taskSnap = await getDoc(doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "tasks", taskId));
+    if (taskSnap.exists()) {
+      const d = taskSnap.data();
+      currentAssigneeIds = d.assigneeIds || (d.assigneeId ? [d.assigneeId] : []);
+    }
+  } catch(e) {}
+  populateMemberChecklists(currentAssigneeIds);
   document.getElementById("taskModalTitle").textContent = "Assign Members";
   document.getElementById("taskTitle").closest(".form-group").style.display = "none";
   document.getElementById("taskDesc").closest(".form-group").style.display  = "none";
@@ -442,7 +462,11 @@ async function loadMilestones(forceOpen = null) {
   const milestones = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   document.getElementById("milestoneCount").textContent = milestones.length;
-  document.getElementById("statMilestones").textContent = milestones.length;
+  const doneMilestones = milestones.filter(ms => (ms.progress ?? 0) >= 100).length;
+  document.getElementById("statMilestones").textContent = `${doneMilestones}/${milestones.length}`;
+
+  // Render timeline with the latest milestones
+  renderTimeline(milestones);
 
   if (milestones.length === 0) {
     list.innerHTML = emptyState("No milestones yet", "Break your project into milestones to track phases.", "milestone");
@@ -471,22 +495,25 @@ function milestoneRow(ms, tasks) {
     const assigneeHtml = assignees.length ? assignees.map(a =>
       `<div class="tooltip-wrap avatar avatar-sm" data-tooltip="${escHtml(`${a.name} ${a.surname}`)}">${initials(`${a.name} ${a.surname}`)}</div>`
     ).join("") : "";
-    return `
+    const taskRow = `
       <div class="item-row" data-ms-task-id="${t.id}" data-ms-id="${ms.id}" style="background:var(--bg);">
         <div class="item-checkbox ${t.complete ? "checked" : ""}" data-toggle-ms-task="${t.id}" data-ms-id="${ms.id}"></div>
-        <div class="item-body">
-          <div class="item-title ${t.complete ? "done" : ""}">${escHtml(t.title)}</div>
+        <div class="item-body" data-expand-ms-task="${t.id}">
+          <div style="display:flex;align-items:center;gap:.5rem;">
+            <div class="item-title ${t.complete ? "done" : ""}" style="flex:1;min-width:0;">${escHtml(t.title)}</div>
+            <div style="display:flex;gap:.2rem;align-items:center;">${assigneeHtml}</div>
+            <svg class="item-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </div>
           ${t.description ? `<div class="item-desc">${escHtml(t.description)}</div>` : ""}
-        </div>
-        ${assigneeHtml}
-        <div class="item-actions">
-          <button class="btn btn-ghost btn-sm" data-delete-ms-task="${t.id}" data-ms-id="${ms.id}">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
-            </svg>
-          </button>
+          <div class="item-actions">
+            <button class="btn btn-ghost btn-sm" data-delete-ms-task="${t.id}" data-ms-id="${ms.id}" style="color:var(--danger);">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+              Delete
+            </button>
+          </div>
         </div>
       </div>`;
+    return taskRow;
   }).join("");
 
   return `
@@ -574,11 +601,14 @@ function attachMilestoneListeners() {
   document.querySelectorAll("[data-add-ms-task]").forEach(btn =>
     btn.addEventListener("click", () => openMsTaskModal(btn.dataset.addMsTask))
   );
+  document.querySelectorAll("[data-expand-ms-task]").forEach(el =>
+    el.addEventListener("click", () => el.closest(".item-row").classList.toggle("expanded"))
+  );
   document.querySelectorAll("[data-toggle-ms-task]").forEach(el =>
-    el.addEventListener("click", () => toggleMilestoneTask(el.dataset.msId, el.dataset.toggleMsTask))
+    el.addEventListener("click", (e) => { e.stopPropagation(); toggleMilestoneTask(el.dataset.msId, el.dataset.toggleMsTask); })
   );
   document.querySelectorAll("[data-delete-ms-task]").forEach(btn =>
-    btn.addEventListener("click", () => deleteMilestoneTask(btn.dataset.msId, btn.dataset.deleteMsTask))
+    btn.addEventListener("click", (e) => { e.stopPropagation(); deleteMilestoneTask(btn.dataset.msId, btn.dataset.deleteMsTask); })
   );
 }
 
@@ -856,6 +886,16 @@ function openEditModal() {
   document.getElementById("editProjTitle").value = projectData.title || "";
   document.getElementById("editProjDesc").value  = projectData.description || "";
   document.getElementById("editProjDue").value   = projectData.dueDate || "";
+  const currentColor = projectData.color || "#5B6AF5";
+  document.querySelectorAll("#editProjColorPicker .color-swatch").forEach(b => {
+    b.classList.toggle("selected", b.dataset.color === currentColor);
+  });
+  document.querySelectorAll("#editProjColorPicker .color-swatch").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll("#editProjColorPicker .color-swatch").forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+    };
+  });
   openModal("editProjectModal");
 }
 
@@ -863,17 +903,204 @@ async function saveProject() {
   const title = document.getElementById("editProjTitle").value.trim();
   const desc  = document.getElementById("editProjDesc").value.trim();
   const due   = document.getElementById("editProjDue").value;
+  const color = document.querySelector("#editProjColorPicker .color-swatch.selected")?.dataset.color || projectData.color || "#5B6AF5";
   if (!title) return;
 
   const btn = document.getElementById("saveProjectBtn");
   btn.disabled = true;
   try {
-    await updateDoc(projRef(), { title, description: desc || "", dueDate: due || null });
+    await updateDoc(projRef(), { title, description: desc || "", dueDate: due || null, color });
     closeModal("editProjectModal");
     showToast("Project updated!");
+    // Update the page accent color
+    document.documentElement.style.setProperty("--primary", color);
     await loadProject();
   } catch(err) { showToast("Failed to save changes.", "error"); console.error(err); }
   finally { btn.disabled = false; }
+}
+
+// ── Timeline ───────────────────────────────────────────────────────────────────
+
+let tlTransform = { x: 40, y: 40, scale: 1 };
+let tlDragging  = false;
+let tlDragStart = { x: 0, y: 0 };
+let tlNodeDrags = {};  // { msId: { x, y } } — custom positions for dragged nodes
+let tlMilestones = []; // latest milestones array for re-render
+
+const NODE_W = 200, NODE_H = 110, COL_GAP = 100, ROW_GAP = 60, COLS = 3;
+
+function tlDefaultPos(i) {
+  const col = i % COLS, row = Math.floor(i / COLS);
+  return { x: col * (NODE_W + COL_GAP), y: row * (NODE_H + ROW_GAP) };
+}
+
+function tlGetPos(msId, i) {
+  return tlNodeDrags[msId] || tlDefaultPos(i);
+}
+
+function renderTimeline(milestones) {
+  tlMilestones = milestones;
+  const canvas = document.getElementById("timelineCanvas");
+  const emptyEl = document.getElementById("timelineEmpty");
+  if (!canvas) return;
+
+  if (!milestones.length) {
+    canvas.innerHTML = "";
+    if (emptyEl) { emptyEl.style.display = "flex"; }
+    return;
+  }
+  if (emptyEl) emptyEl.style.display = "none";
+
+  // Sort by expectedEndDate then createdAt
+  const sorted = [...milestones].sort((a, b) => {
+    const da = a.expectedEndDate || "";
+    const db = b.expectedEndDate || "";
+    if (da && db) return da.localeCompare(db);
+    if (da) return -1;
+    if (db) return 1;
+    return 0;
+  });
+
+  let html = "";
+
+  // Draw arrows first (behind nodes)
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const from = tlGetPos(sorted[i].id, i);
+    const to   = tlGetPos(sorted[i + 1].id, i + 1);
+    const fx = from.x + NODE_W, fy = from.y + NODE_H / 2;
+    const tx = to.x,            ty = to.y + NODE_H / 2;
+    const cx1 = fx + Math.max((tx - fx) / 2, 40);
+    const cx2 = tx - Math.max((tx - fx) / 2, 40);
+    html += `<path d="M${fx},${fy} C${cx1},${fy} ${cx2},${ty} ${tx},${ty}"
+      fill="none" stroke="#CBD5E1" stroke-width="2" marker-end="url(#arrowhead)"
+      stroke-dasharray="${sorted[i + 1].expectedEndDate ? 'none' : '6,4'}"/>`;
+  }
+
+  // Draw nodes
+  sorted.forEach((ms, i) => {
+    const { x, y } = tlGetPos(ms.id, i);
+    const progress  = ms.progress ?? 0;
+    const fillColor = progress >= 100 ? "#22C55E" : progress >= 50 ? "#F59E0B" : "#5B6AF5";
+    const dLabel    = ms.expectedEndDate ? deadlineLabel(ms.expectedEndDate) : "";
+    const dClass    = ms.expectedEndDate ? deadlineClass(ms.expectedEndDate) : "ok";
+    const dColor    = dClass === "overdue" && progress < 100 ? "#EF4444" : dClass === "soon" && progress < 100 ? "#F59E0B" : "#94A3B8";
+
+    const titleTrunc = escHtml(ms.title.length > 22 ? ms.title.slice(0, 20) + "\u2026" : ms.title);
+    const descTrunc  = ms.description ? escHtml(ms.description.length > 30 ? ms.description.slice(0, 28) + "\u2026" : ms.description) : "";
+
+    html += `
+      <g class="tl-node" data-ms-id="${ms.id}" transform="translate(${x},${y})" style="cursor:grab;">
+        <rect x="2" y="3" width="${NODE_W}" height="${NODE_H}" rx="10" fill="rgba(0,0,0,.06)"/>
+        <rect width="${NODE_W}" height="${NODE_H}" rx="10" fill="white" stroke="#E2E8F0" stroke-width="1.5"/>
+        <rect width="${NODE_W}" height="4" rx="2" fill="${fillColor}" opacity=".9"/>
+        <text x="12" y="26" font-family="Inter,system-ui,sans-serif" font-size="13" font-weight="600" fill="#0F172A">${titleTrunc}</text>
+        ${descTrunc ? `<text x="12" y="42" font-family="Inter,system-ui,sans-serif" font-size="10.5" fill="#64748B">${descTrunc}</text>` : ""}
+        <rect x="12" y="${NODE_H - 38}" width="${NODE_W - 24}" height="5" rx="3" fill="#E2E8F0"/>
+        <rect x="12" y="${NODE_H - 38}" width="${Math.round((NODE_W - 24) * progress / 100)}" height="5" rx="3" fill="${fillColor}"/>
+        <text x="12" y="${NODE_H - 46}" font-family="Inter,system-ui,sans-serif" font-size="10" fill="#64748B">Progress</text>
+        <text x="${NODE_W - 12}" y="${NODE_H - 46}" font-family="Inter,system-ui,sans-serif" font-size="10" font-weight="600" fill="#0F172A" text-anchor="end">${progress}%</text>
+        ${dLabel ? `<text x="12" y="${NODE_H - 14}" font-family="Inter,system-ui,sans-serif" font-size="10" fill="${dColor}">${escHtml(dLabel)}</text>` : ""}
+      </g>`;
+  });
+
+  canvas.innerHTML = html;
+  applyTlTransform();
+  attachTlNodeDragListeners(sorted);
+}
+
+function applyTlTransform() {
+  const canvas = document.getElementById("timelineCanvas");
+  if (canvas) canvas.setAttribute("transform",
+    `translate(${tlTransform.x}, ${tlTransform.y}) scale(${tlTransform.scale})`);
+}
+
+function attachTlNodeDragListeners(sorted) {
+  document.querySelectorAll(".tl-node").forEach(node => {
+    const msId = node.dataset.msId;
+    const idx  = sorted.findIndex(ms => ms.id === msId);
+    let dragging = false, startMx = 0, startMy = 0, startNx = 0, startNy = 0;
+
+    node.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+      dragging = true;
+      node.style.cursor = "grabbing";
+      startMx = e.clientX;
+      startMy = e.clientY;
+      const pos = tlGetPos(msId, idx);
+      startNx = pos.x;
+      startNy = pos.y;
+
+      const onMove = (e2) => {
+        if (!dragging) return;
+        const dx = (e2.clientX - startMx) / tlTransform.scale;
+        const dy = (e2.clientY - startMy) / tlTransform.scale;
+        tlNodeDrags[msId] = { x: startNx + dx, y: startNy + dy };
+        renderTimeline(tlMilestones);
+      };
+      const onUp = () => {
+        dragging = false;
+        node.style.cursor = "grab";
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    });
+  });
+}
+
+function initTimelineControls() {
+  const svg = document.getElementById("timelineSvg");
+  const container = document.getElementById("timelineContainer");
+  if (!svg || !container) return;
+
+  // SVG pan (drag on background)
+  svg.addEventListener("mousedown", (e) => {
+    if (e.target.closest(".tl-node")) return;
+    tlDragging = true;
+    tlDragStart = { x: e.clientX - tlTransform.x, y: e.clientY - tlTransform.y };
+    svg.style.cursor = "grabbing";
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!tlDragging) return;
+    tlTransform.x = e.clientX - tlDragStart.x;
+    tlTransform.y = e.clientY - tlDragStart.y;
+    applyTlTransform();
+  });
+  window.addEventListener("mouseup", () => {
+    if (tlDragging) {
+      tlDragging = false;
+      svg.style.cursor = "grab";
+    }
+  });
+
+  // Zoom on scroll
+  svg.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const rect = svg.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const newScale = Math.min(Math.max(tlTransform.scale * delta, 0.3), 3);
+    tlTransform.x = mx - (mx - tlTransform.x) * (newScale / tlTransform.scale);
+    tlTransform.y = my - (my - tlTransform.y) * (newScale / tlTransform.scale);
+    tlTransform.scale = newScale;
+    applyTlTransform();
+  }, { passive: false });
+
+  // Buttons
+  document.getElementById("tlZoomIn").addEventListener("click", () => {
+    tlTransform.scale = Math.min(tlTransform.scale * 1.2, 3);
+    applyTlTransform();
+  });
+  document.getElementById("tlZoomOut").addEventListener("click", () => {
+    tlTransform.scale = Math.max(tlTransform.scale * 0.8, 0.3);
+    applyTlTransform();
+  });
+  document.getElementById("tlReset").addEventListener("click", () => {
+    tlTransform = { x: 40, y: 40, scale: 1 };
+    tlNodeDrags = {};
+    renderTimeline(tlMilestones);
+  });
 }
 
 // ── Empty state ────────────────────────────────────────────────────────────────
