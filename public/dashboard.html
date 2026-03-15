@@ -19,13 +19,19 @@
     </div>
 
     <nav class="sidebar-nav">
+      <button class="sidebar-toggle" id="sidebarToggle" title="Toggle sidebar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+        <span class="nav-label">Collapse</span>
+      </button>
       <a href="dashboard.html" class="sidebar-nav-item active">
         <!-- grid icon -->
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
           <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
         </svg>
-        Dashboard
+        <span class="nav-label">Dashboard</span>
       </a>
     </nav>
 
@@ -42,7 +48,7 @@
           <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
           <polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
         </svg>
-        Sign out
+        <span class="nav-label">Sign out</span>
       </button>
     </div>
   </aside>
@@ -121,5 +127,15 @@
 <div class="toast-container" id="toastContainer"></div>
 
 <script type="module" src="js/dashboard.js"></script>
+<script>
+  (function() {
+    var sidebar = document.querySelector('.sidebar');
+    if (localStorage.getItem('sidebarCollapsed') === '1') sidebar.classList.add('collapsed');
+    document.getElementById('sidebarToggle').addEventListener('click', function() {
+      sidebar.classList.toggle('collapsed');
+      localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed') ? '1' : '0');
+    });
+  })();
+</script>
 </body>
 </html>

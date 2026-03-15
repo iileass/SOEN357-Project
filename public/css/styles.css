@@ -339,13 +339,13 @@ small { font-size: 0.8125rem; }
 .item-row {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 0.875rem 1rem;
-  display: flex; align-items: center; gap: 0.875rem;
+  display: flex; align-items: flex-start; gap: 0.875rem;
   transition: box-shadow var(--transition);
 }
 .item-row:hover { box-shadow: var(--shadow-sm); }
 .item-checkbox {
   width: 18px; height: 18px; border: 2px solid var(--border);
-  border-radius: 5px; flex-shrink: 0; cursor: pointer;
+  border-radius: 5px; flex-shrink: 0; cursor: pointer; margin-top: 2px;
   display: flex; align-items: center; justify-content: center; transition: var(--transition);
 }
 .item-checkbox.checked { background: var(--success); border-color: var(--success); }
@@ -354,12 +354,15 @@ small { font-size: 0.8125rem; }
   border: 2px solid #fff; border-top: none; border-left: none;
   transform: rotate(45deg) translateY(-1px);
 }
-.item-body { flex: 1; min-width: 0; }
 .item-title { font-size: 0.9375rem; font-weight: 500; line-height: 1.3; }
 .item-title.done { text-decoration: line-through; color: var(--text-secondary); }
-.item-desc { font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.15rem; }
-.item-actions { display: flex; gap: 0.25rem; opacity: 0; transition: opacity var(--transition); }
-.item-row:hover .item-actions { opacity: 1; }
+.item-body { cursor: pointer; flex: 1; min-width: 0; }
+.item-desc { display: none; font-size: 0.8125rem; color: var(--text-secondary); margin-top: 0.35rem; }
+.item-row.expanded .item-desc { display: block; }
+.item-chevron { width: 14px; height: 14px; flex-shrink: 0; opacity: 0.4; transition: transform var(--transition); color: var(--text-secondary); }
+.item-row.expanded .item-chevron { transform: rotate(180deg); opacity: 0.7; }
+.item-actions { display: none; gap: 0.5rem; margin-top: 0.5rem; flex-wrap: wrap; align-items: center; }
+.item-row.expanded .item-actions { display: flex; }
 
 /* ── Milestone List ── */
 .milestone-row {
@@ -483,6 +486,56 @@ small { font-size: 0.8125rem; }
 .dropdown-item:hover { background: var(--bg); }
 .dropdown-item.danger { color: var(--danger); }
 .dropdown-item svg { width: 15px; height: 15px; }
+
+/* ── Custom Tooltip ── */
+.tooltip-wrap { position: relative; display: inline-flex; }
+.tooltip-wrap::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 6px); left: 50%;
+  transform: translateX(-50%);
+  background: #1E1E2E; color: #fff; white-space: nowrap;
+  padding: .25rem .55rem; border-radius: 6px; font-size: .72rem; font-weight: 500;
+  pointer-events: none; opacity: 0; transition: opacity 0.15s ease;
+  z-index: 300;
+}
+.tooltip-wrap:hover::after { opacity: 1; }
+
+/* ── Assignee Checklist ── */
+.assignee-checklist { display: flex; flex-direction: column; gap: .375rem; max-height: 180px; overflow-y: auto; }
+.assignee-check-row {
+  display: flex; align-items: center; gap: .625rem;
+  padding: .375rem .5rem; border-radius: var(--radius); cursor: pointer;
+  font-size: .875rem; transition: background var(--transition);
+}
+.assignee-check-row:hover { background: var(--bg); }
+.assignee-check-row input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--primary); flex-shrink: 0; cursor: pointer; }
+.assignee-checklist-empty { font-size: .8125rem; color: var(--text-secondary); padding: .25rem .5rem; }
+
+/* ── Sidebar collapse ── */
+.sidebar { transition: width 0.25s ease; overflow: hidden; }
+.sidebar.collapsed { width: 56px; }
+.sidebar.collapsed .sidebar-logo-text { display: none; }
+.sidebar.collapsed .sidebar-logo { padding: 1.25rem 0; justify-content: center; }
+.sidebar.collapsed .sidebar-nav-item { justify-content: center; padding: 0.625rem; }
+.sidebar.collapsed .sidebar-nav-item .nav-label { display: none; }
+.sidebar.collapsed .sidebar-user-info { display: none; }
+.sidebar.collapsed .sidebar-user { justify-content: center; }
+.sidebar.collapsed .sidebar-logout .nav-label { display: none; }
+.sidebar.collapsed .sidebar-logout { justify-content: center; }
+.sidebar.collapsed .sidebar-toggle .nav-label { display: none; }
+.sidebar.collapsed .sidebar-toggle { justify-content: center; }
+.main-content { transition: margin-left 0.25s ease; }
+body:has(.sidebar.collapsed) .main-content { margin-left: 56px; }
+
+/* Sidebar toggle button */
+.sidebar-toggle {
+  width: 100%; display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.75rem; border-radius: 8px;
+  font-size: 0.875rem; font-weight: 500;
+  color: var(--sidebar-text); transition: var(--transition); background: none; border: none; cursor: pointer;
+}
+.sidebar-toggle:hover { background: var(--sidebar-hover); color: #fff; }
+.sidebar-toggle svg { width: 16px; height: 16px; flex-shrink: 0; }
 
 /* =============================================
    RESPONSIVE

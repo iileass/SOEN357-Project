@@ -113,22 +113,49 @@ async function loadProjects() {
 
   const projects = [];
   for (const d of snap.docs) {
-    // Fetch task count for each project
     const tasksSnap = await getDocs(collection(db, "users", currentUser.uid, "projects", d.id, "tasks"));
     const doneTasks = tasksSnap.docs.filter(t => t.data().complete).length;
     const totalTasks = tasksSnap.size;
 
     const milestonesSnap = await getDocs(collection(db, "users", currentUser.uid, "projects", d.id, "milestones"));
     const membersSnap    = await getDocs(collection(db, "users", currentUser.uid, "projects", d.id, "members"));
+    const milestoneDone  = milestonesSnap.docs.filter(d => (d.data().progress ?? 0) >= 100).length;
 
     projects.push({
       id: d.id,
+      ownerUid: currentUser.uid,
       ...d.data(),
       totalTasks,
       doneTasks,
       milestoneCount: milestonesSnap.size,
+      milestoneDone,
       memberCount: membersSnap.size,
+      isShared: false,
     });
+  }
+
+  // Load projects shared with this user via memberOf
+  const memberOfSnap = await getDocs(collection(db, "users", currentUser.uid, "memberOf"));
+  for (const mDoc of memberOfSnap.docs) {
+    const { ownerUid, projectId } = mDoc.data();
+    if (!ownerUid || !projectId) continue;
+    try {
+      const pSnap = await getDoc(doc(db, "users", ownerUid, "projects", projectId));
+      if (!pSnap.exists()) continue;
+      const tasksSnap = await getDocs(collection(db, "users", ownerUid, "projects", projectId, "tasks"));
+      const doneTasks  = tasksSnap.docs.filter(t => t.data().complete).length;
+      const milestonesSnap = await getDocs(collection(db, "users", ownerUid, "projects", projectId, "milestones"));
+      const membersSnap    = await getDocs(collection(db, "users", ownerUid, "projects", projectId, "members"));
+      const milestoneDone  = milestonesSnap.docs.filter(d => (d.data().progress ?? 0) >= 100).length;
+      projects.push({
+        id: projectId, ownerUid,
+        ...pSnap.data(),
+        totalTasks: tasksSnap.size, doneTasks,
+        milestoneCount: milestonesSnap.size, milestoneDone,
+        memberCount: membersSnap.size,
+        isShared: true,
+      });
+    } catch(e) { console.warn("Could not load shared project:", e); }
   }
 
   renderProjects(grid, projects);
@@ -156,19 +183,24 @@ function renderProjects(grid, projects) {
     const dClass   = deadlineClass(p.dueDate);
     const dLabel   = deadlineLabel(p.dueDate);
     const pColor   = progressColor(progress);
+    const ownerUid = p.ownerUid || currentUser.uid;
 
     return `
-      <div class="project-card" onclick="openProject('${p.id}')">
+      <div class="project-card" onclick="openProject('${p.id}','${ownerUid}')">
         <div class="project-card-header">
-          <h3 class="project-card-title">${escHtml(p.title)}</h3>
+          <div style="display:flex;align-items:center;gap:.4rem;flex:1;min-width:0;">
+            ${p.isShared ? `<span class="badge badge-gray" style="font-size:.7rem;margin-right:.25rem;">Shared</span>` : ""}
+            <h3 class="project-card-title">${escHtml(p.title)}</h3>
+          </div>
           <div class="project-card-actions" onclick="event.stopPropagation()">
+            ${!p.isShared ? `
             <button class="btn btn-ghost btn-sm" onclick="askDelete('${p.id}','${escHtml(p.title)}')" title="Delete project">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
                 <path d="M10 11v6"/><path d="M14 11v6"/>
                 <path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
               </svg>
-            </button>
+            </button>` : ""}
           </div>
         </div>
 
@@ -200,6 +232,12 @@ function renderProjects(grid, projects) {
               <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
             </svg>
             ${p.doneTasks}/${p.totalTasks} tasks
+          </span>
+          <span class="project-card-meta-item">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+            </svg>
+            ${p.milestoneDone}/${p.milestoneCount} milestones
           </span>
           <span class="project-card-meta-item">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -279,8 +317,8 @@ async function confirmDelete() {
 
 // ── Open Project ──────────────────────────────────────────────────────────────
 
-function openProject(projectId) {
-  window.location.href = `project.html?id=${projectId}&owner=${currentUser.uid}`;
+function openProject(projectId, ownerUid) {
+  window.location.href = `project.html?id=${projectId}&owner=${ownerUid || currentUser.uid}`;
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

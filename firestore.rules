@@ -37,8 +37,11 @@ service cloud.firestore {
       }
 
       // ── memberOf (back-references to projects where user is a member) ──
+      // Read: only the user themselves.
+      // Write: any authenticated user — project owners write these on behalf of members they add.
       match /memberOf/{docId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read:  if request.auth != null && request.auth.uid == userId;
+        allow write: if request.auth != null;
       }
     }
   }
