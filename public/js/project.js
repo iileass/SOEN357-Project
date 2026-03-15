@@ -1,4 +1,4 @@
-import { db, auth } from "./firebase-config.js";
+import { db } from "./firebase-config.js";
 import { requireAuth, getUserProfile, logout } from "./auth.js";
 import {
   doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc,
@@ -6,28 +6,35 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // ── URL params ─────────────────────────────────────────────────────────────────
-const params    = new URLSearchParams(window.location.search);
+const params     = new URLSearchParams(window.location.search);
 const PROJECT_ID = params.get("id");
 const OWNER_UID  = params.get("owner");
 
 // ── State ──────────────────────────────────────────────────────────────────────
-let currentUser  = null;
-let projectData  = null;
-let foundMember  = null;         // user found during member lookup
-let currentMsId  = null;         // milestone id for adding sub-tasks
+let currentUser    = null;
+let projectData    = null;
+let foundMember    = null;   // user found during member lookup
+let currentMsId    = null;   // milestone id for adding sub-tasks
+let projectMembers = [];     // [{userId, name, surname, email}] — owner + added members
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Firestore path helpers ─────────────────────────────────────────────────────
+const projRef      = ()     => doc(db, "users", OWNER_UID, "projects", PROJECT_ID);
+const tasksCol     = ()     => collection(db, "users", OWNER_UID, "projects", PROJECT_ID, "tasks");
+const msCol        = ()     => collection(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones");
+const membersCol   = ()     => collection(db, "users", OWNER_UID, "projects", PROJECT_ID, "members");
+const msTasksCol   = (msId) => collection(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones", msId, "tasks");
+const msDocRef     = (msId) => doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones", msId);
 
+// ── Generic helpers ────────────────────────────────────────────────────────────
 function openModal(id)  { document.getElementById(id).classList.add("open"); }
 function closeModal(id) { document.getElementById(id).classList.remove("open"); }
 
 function showToast(msg, type = "success") {
-  const container = document.getElementById("toastContainer");
-  const toast = document.createElement("div");
-  toast.className = `toast ${type}`;
-  toast.textContent = msg;
-  container.appendChild(toast);
-  setTimeout(() => toast.remove(), 3000);
+  const t = document.createElement("div");
+  t.className = `toast ${type}`;
+  t.textContent = msg;
+  document.getElementById("toastContainer").appendChild(t);
+  setTimeout(() => t.remove(), 3000);
 }
 
 function escHtml(str) {
@@ -41,17 +48,15 @@ function initials(name) {
   return name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
 }
 
-function deadlineClass(dateStr) {
-  if (!dateStr) return "ok";
-  const diff = (new Date(dateStr) - new Date()) / 86400000;
-  if (diff < 0)  return "overdue";
-  if (diff < 7)  return "soon";
-  return "ok";
+function deadlineClass(d) {
+  if (!d) return "ok";
+  const diff = (new Date(d) - new Date()) / 86400000;
+  return diff < 0 ? "overdue" : diff < 7 ? "soon" : "ok";
 }
 
-function deadlineLabel(dateStr) {
-  if (!dateStr) return "";
-  const date = new Date(dateStr);
+function deadlineLabel(d) {
+  if (!d) return "";
+  const date = new Date(d);
   const diff = Math.ceil((date - new Date()) / 86400000);
   if (diff < 0)   return `${Math.abs(diff)}d overdue`;
   if (diff === 0) return "Due today";
@@ -59,32 +64,81 @@ function deadlineLabel(dateStr) {
   return `Due ${date.toLocaleDateString("en-CA", { month: "short", day: "numeric" })}`;
 }
 
-function progressColor(pct) {
-  if (pct >= 100) return "success";
-  if (pct >= 50)  return "warning";
-  return "";
+function progressColor(p) {
+  return p >= 100 ? "success" : p >= 50 ? "warning" : "";
 }
 
-function showErr(id, msg) { const el=document.getElementById(id); el.textContent=msg; el.style.display="block"; }
-function hideErr(id)      { const el=document.getElementById(id); if(el) el.style.display="none"; }
+function showErr(id, msg) { const e = document.getElementById(id); e.textContent = msg; e.style.display = "block"; }
+function hideErr(id)      { const e = document.getElementById(id); if (e) e.style.display = "none"; }
 
-// Firestore path helpers
-const projRef  = () => doc(db, "users", OWNER_UID, "projects", PROJECT_ID);
-const tasksCol = () => collection(db, "users", OWNER_UID, "projects", PROJECT_ID, "tasks");
-const msCol    = () => collection(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones");
-const membersCol=() => collection(db, "users", OWNER_UID, "projects", PROJECT_ID, "members");
-const msTasksCol=(msId) => collection(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones", msId, "tasks");
+// ── Progress recalculation ─────────────────────────────────────────────────────
+
+// Recalculates a milestone's progress from its tasks and writes back to Firestore.
+async function recalcMilestoneProgress(msId) {
+  const snap  = await getDocs(msTasksCol(msId));
+  const tasks = snap.docs.map(d => d.data());
+  const pct   = tasks.length ? Math.round(tasks.filter(t => t.complete).length / tasks.length * 100) : 0;
+  await updateDoc(msDocRef(msId), { progress: pct });
+  return pct;
+}
+
+// Recalculates the project's overall progress from project-level tasks and updates Firestore + UI.
+async function recalcProjectProgress() {
+  const snap  = await getDocs(tasksCol());
+  const tasks = snap.docs.map(d => d.data());
+  const pct   = tasks.length ? Math.round(tasks.filter(t => t.complete).length / tasks.length * 100) : 0;
+  await updateDoc(projRef(), { progress: pct });
+  if (projectData) projectData.progress = pct;
+  // Update overview bar inline (no full reload needed)
+  document.getElementById("progressPct").textContent = `${pct}%`;
+  const fill = document.getElementById("progressFill");
+  fill.style.width  = `${pct}%`;
+  fill.className    = `progress-fill ${progressColor(pct)}`;
+}
+
+// ── Open-milestone state helpers ───────────────────────────────────────────────
+
+// Returns a Set of milestone IDs whose task panels are currently expanded.
+function getOpenMilestones() {
+  const open = new Set();
+  document.querySelectorAll(".milestone-subtasks.open").forEach(el => {
+    open.add(el.id.replace("ms-tasks-", ""));
+  });
+  return open;
+}
+
+// Restores expanded state on the freshly-rendered milestone rows.
+function restoreOpenMilestones(openSet) {
+  openSet.forEach(msId => {
+    const panel  = document.getElementById(`ms-tasks-${msId}`);
+    const toggle = document.querySelector(`[data-ms-toggle="${msId}"]`);
+    if (panel)  panel.classList.add("open");
+    if (toggle) toggle.classList.add("open");
+  });
+}
+
+// ── Member cache & assignee selects ───────────────────────────────────────────
+
+// Rebuilds the assignee <select> options in both task modals from projectMembers.
+function populateMemberSelects() {
+  const unassigned = `<option value="">Unassigned</option>`;
+  const options    = projectMembers.map(m =>
+    `<option value="${m.userId}">${escHtml(`${m.name} ${m.surname}`)}</option>`
+  ).join("");
+
+  ["taskAssignee", "msTaskAssignee"].forEach(id => {
+    const sel = document.getElementById(id);
+    if (sel) sel.innerHTML = unassigned + options;
+  });
+}
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 
 async function init() {
-  if (!PROJECT_ID || !OWNER_UID) {
-    window.location.href = "/dashboard.html"; return;
-  }
+  if (!PROJECT_ID || !OWNER_UID) { window.location.href = "/dashboard.html"; return; }
 
   currentUser = await requireAuth();
 
-  // Sidebar user info
   const profile = await getUserProfile(currentUser.uid);
   if (profile) {
     const fullName = `${profile.name} ${profile.surname}`;
@@ -95,46 +149,40 @@ async function init() {
 
   document.getElementById("logoutBtn").addEventListener("click", logout);
 
-  // Tab switching
-  document.querySelectorAll(".tab-btn").forEach(btn => {
-    btn.addEventListener("click", () => switchTab(btn.dataset.tab));
-  });
+  document.querySelectorAll(".tab-btn").forEach(btn =>
+    btn.addEventListener("click", () => switchTab(btn.dataset.tab))
+  );
+  document.querySelectorAll("[data-close]").forEach(btn =>
+    btn.addEventListener("click", () => closeModal(btn.dataset.close))
+  );
+  document.querySelectorAll(".modal-overlay").forEach(overlay =>
+    overlay.addEventListener("click", e => { if (e.target === overlay) overlay.classList.remove("open"); })
+  );
 
-  // Close modals
-  document.querySelectorAll("[data-close]").forEach(btn => {
-    btn.addEventListener("click", () => closeModal(btn.dataset.close));
-  });
-  document.querySelectorAll(".modal-overlay").forEach(overlay => {
-    overlay.addEventListener("click", e => { if (e.target === overlay) overlay.classList.remove("open"); });
-  });
-
-  // Button wiring
-  document.getElementById("editProjectBtn").addEventListener("click", openEditModal);
-  document.getElementById("saveProjectBtn").addEventListener("click", saveProject);
-  document.getElementById("newTaskBtn").addEventListener("click",      openNewTaskModal);
-  document.getElementById("createTaskBtn").addEventListener("click",   createTask);
-  document.getElementById("newMilestoneBtn").addEventListener("click", openNewMilestoneModal);
+  document.getElementById("editProjectBtn").addEventListener("click",     openEditModal);
+  document.getElementById("saveProjectBtn").addEventListener("click",     saveProject);
+  document.getElementById("newTaskBtn").addEventListener("click",         openNewTaskModal);
+  document.getElementById("createTaskBtn").addEventListener("click",      createTask);
+  document.getElementById("newMilestoneBtn").addEventListener("click",    openNewMilestoneModal);
   document.getElementById("createMilestoneBtn").addEventListener("click", createMilestone);
-  document.getElementById("addMemberBtn").addEventListener("click",    openAddMemberModal);
-  document.getElementById("lookupMemberBtn").addEventListener("click", lookupMember);
-  document.getElementById("confirmAddMemberBtn").addEventListener("click", addMember);
-  document.getElementById("createMsTaskBtn").addEventListener("click", createMilestoneTask);
-
-  // Enter key on member email input triggers lookup
+  document.getElementById("addMemberBtn").addEventListener("click",       openAddMemberModal);
+  document.getElementById("lookupMemberBtn").addEventListener("click",    lookupMember);
+  document.getElementById("confirmAddMemberBtn").addEventListener("click",addMember);
+  document.getElementById("createMsTaskBtn").addEventListener("click",    createMilestoneTask);
   document.getElementById("memberEmail").addEventListener("keydown", e => {
     if (e.key === "Enter") { e.preventDefault(); lookupMember(); }
   });
 
   await loadProject();
+  await loadMembers();   // must run before loadTasks so projectMembers cache is ready
   await loadTasks();
   await loadMilestones();
-  await loadMembers();
 }
 
-// ── Tab ────────────────────────────────────────────────────────────────────────
+// ── Tabs ───────────────────────────────────────────────────────────────────────
 
 function switchTab(tab) {
-  document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  document.querySelectorAll(".tab-btn").forEach(b  => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === `panel-${tab}`));
 }
 
@@ -145,21 +193,20 @@ async function loadProject() {
   if (!snap.exists()) { window.location.href = "/dashboard.html"; return; }
   projectData = { id: snap.id, ...snap.data() };
 
-  document.getElementById("breadcrumbTitle").textContent = projectData.title;
-  document.getElementById("projectTitle").textContent    = projectData.title;
-  document.getElementById("projectDesc").textContent     = projectData.description || "";
-  document.getElementById("projectOverview").style.display = "";
+  document.getElementById("breadcrumbTitle").textContent    = projectData.title;
+  document.getElementById("projectTitle").textContent       = projectData.title;
+  document.getElementById("projectDesc").textContent        = projectData.description || "";
+  document.getElementById("projectOverview").style.display  = "";
 
-  const progress = projectData.progress ?? 0;
-  document.getElementById("progressPct").textContent = `${progress}%`;
+  const pct  = projectData.progress ?? 0;
   const fill = document.getElementById("progressFill");
-  fill.style.width = `${progress}%`;
-  fill.className = `progress-fill ${progressColor(progress)}`;
+  document.getElementById("progressPct").textContent = `${pct}%`;
+  fill.style.width = `${pct}%`;
+  fill.className   = `progress-fill ${progressColor(pct)}`;
 
-  const dLabel = deadlineLabel(projectData.dueDate);
-  const dEl    = document.getElementById("projectDueLabel");
-  dEl.textContent  = dLabel;
-  dEl.className    = `deadline ${deadlineClass(projectData.dueDate)}`;
+  const dEl = document.getElementById("projectDueLabel");
+  dEl.textContent = deadlineLabel(projectData.dueDate);
+  dEl.className   = `deadline ${deadlineClass(projectData.dueDate)}`;
 }
 
 // ── Tasks ──────────────────────────────────────────────────────────────────────
@@ -168,23 +215,33 @@ async function loadTasks() {
   const list = document.getElementById("taskList");
   list.innerHTML = `<div class="page-loader"><div class="spinner"></div></div>`;
 
-  const snap = await getDocs(query(tasksCol(), orderBy("createdAt")));
+  const snap  = await getDocs(query(tasksCol(), orderBy("createdAt")));
   const tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   document.getElementById("taskCount").textContent = tasks.length;
   const done = tasks.filter(t => t.complete).length;
   document.getElementById("statTasks").textContent = `${done}/${tasks.length}`;
 
-  if (tasks.length === 0) {
-    list.innerHTML = emptyState("No tasks yet", "Add your first task to get started.", "task");
-    return;
-  }
+  list.innerHTML = tasks.length
+    ? tasks.map(t => taskRow(t)).join("")
+    : emptyState("No tasks yet", "Add your first task to get started.", "task");
 
-  list.innerHTML = tasks.map(t => taskRow(t)).join("");
   attachTaskListeners();
 }
 
 function taskRow(t) {
+  // Find assignee name from cache
+  const assignee = t.assigneeId ? projectMembers.find(m => m.userId === t.assigneeId) : null;
+  const assigneeHtml = assignee
+    ? `<div class="avatar avatar-sm" style="flex-shrink:0;" title="Assigned to ${escHtml(`${assignee.name} ${assignee.surname}`)}">${initials(`${assignee.name} ${assignee.surname}`)}</div>`
+    : `<button class="btn btn-ghost btn-sm" data-assign-task="${t.id}" title="Assign member" style="color:var(--text-secondary);padding:.2rem .4rem;">
+         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+           <path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/>
+           <circle cx="12" cy="7" r="4"/>
+           <line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/>
+         </svg>
+       </button>`;
+
   return `
     <div class="item-row" data-task-id="${t.id}">
       <div class="item-checkbox ${t.complete ? "checked" : ""}" data-toggle-task="${t.id}"></div>
@@ -192,6 +249,7 @@ function taskRow(t) {
         <div class="item-title ${t.complete ? "done" : ""}">${escHtml(t.title)}</div>
         ${t.description ? `<div class="item-desc">${escHtml(t.description)}</div>` : ""}
       </div>
+      ${assigneeHtml}
       <div class="item-actions">
         <button class="btn btn-ghost btn-sm" data-delete-task="${t.id}" title="Delete task">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -204,59 +262,134 @@ function taskRow(t) {
 }
 
 function attachTaskListeners() {
-  document.querySelectorAll("[data-toggle-task]").forEach(el => {
-    el.addEventListener("click", () => toggleTask(el.dataset.toggleTask));
-  });
-  document.querySelectorAll("[data-delete-task]").forEach(el => {
-    el.addEventListener("click", () => deleteTask(el.dataset.deleteTask));
-  });
+  document.querySelectorAll("[data-toggle-task]").forEach(el =>
+    el.addEventListener("click", () => toggleTask(el.dataset.toggleTask))
+  );
+  document.querySelectorAll("[data-delete-task]").forEach(el =>
+    el.addEventListener("click", () => deleteTask(el.dataset.deleteTask))
+  );
+  document.querySelectorAll("[data-assign-task]").forEach(el =>
+    el.addEventListener("click", () => openAssignModal(el.dataset.assignTask))
+  );
 }
 
 function openNewTaskModal() {
   document.getElementById("taskTitle").value = "";
   document.getElementById("taskDesc").value  = "";
-  document.getElementById("taskModalTitle").textContent = "New Task";
+  populateMemberSelects();
+  document.getElementById("taskAssignee").value = "";
   hideErr("taskError");
   openModal("newTaskModal");
 }
 
 async function createTask() {
-  const title = document.getElementById("taskTitle").value.trim();
-  const desc  = document.getElementById("taskDesc").value.trim();
+  const title      = document.getElementById("taskTitle").value.trim();
+  const desc       = document.getElementById("taskDesc").value.trim();
+  const assigneeId = document.getElementById("taskAssignee").value;
   if (!title) { showErr("taskError", "Task title is required."); return; }
 
-  const btn = document.getElementById("createTaskBtn");
+  const assignee   = assigneeId ? projectMembers.find(m => m.userId === assigneeId) : null;
+  const btn        = document.getElementById("createTaskBtn");
   btn.disabled = true;
   try {
-    await addDoc(tasksCol(), { title, description: desc || "", complete: false, createdAt: serverTimestamp() });
+    await addDoc(tasksCol(), {
+      title,
+      description:  desc || "",
+      complete:     false,
+      assigneeId:   assigneeId || null,
+      assigneeName: assignee ? `${assignee.name} ${assignee.surname}` : null,
+      createdAt:    serverTimestamp(),
+    });
     closeModal("newTaskModal");
     showToast("Task added!");
+    await recalcProjectProgress();
     await loadTasks();
   } catch(err) { showErr("taskError", "Failed to add task."); console.error(err); }
   finally { btn.disabled = false; }
 }
 
 async function toggleTask(taskId) {
-  const taskDocRef = doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "tasks", taskId);
-  const snap = await getDoc(taskDocRef);
+  const ref  = doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "tasks", taskId);
+  const snap = await getDoc(ref);
   if (!snap.exists()) return;
-  await updateDoc(taskDocRef, { complete: !snap.data().complete });
+  await updateDoc(ref, { complete: !snap.data().complete });
+  await recalcProjectProgress();
   await loadTasks();
 }
 
 async function deleteTask(taskId) {
   await deleteDoc(doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "tasks", taskId));
   showToast("Task deleted.", "error");
+  await recalcProjectProgress();
   await loadTasks();
+}
+
+// ── Inline assign (project tasks) ─────────────────────────────────────────────
+
+// Opens the new-task modal pre-populated with assignee options, pointed at an existing task.
+// Simpler UX than a separate modal: use a small floating dropdown.
+let assignTargetId = null;
+
+function openAssignModal(taskId) {
+  if (!projectMembers.length) { showToast("No members to assign.", "error"); return; }
+  assignTargetId = taskId;
+  populateMemberSelects();
+  document.getElementById("taskAssignee").value = "";
+  hideErr("taskError");
+  // Re-use the task modal but tweak title and hide other fields
+  document.getElementById("taskModalTitle").textContent = "Assign Member";
+  document.getElementById("taskTitle").closest(".form-group").style.display = "none";
+  document.getElementById("taskDesc").closest(".form-group").style.display  = "none";
+  document.getElementById("createTaskBtn").textContent = "Assign";
+  document.getElementById("createTaskBtn").onclick = doAssignTask;
+  openModal("newTaskModal");
+}
+
+async function doAssignTask() {
+  const assigneeId = document.getElementById("taskAssignee").value;
+  const assignee   = assigneeId ? projectMembers.find(m => m.userId === assigneeId) : null;
+  const btn        = document.getElementById("createTaskBtn");
+  btn.disabled = true;
+  try {
+    await updateDoc(
+      doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "tasks", assignTargetId),
+      {
+        assigneeId:   assigneeId || null,
+        assigneeName: assignee ? `${assignee.name} ${assignee.surname}` : null,
+      }
+    );
+    closeModal("newTaskModal");
+    showToast("Task assigned!");
+    await loadTasks();
+  } catch(err) { showToast("Failed to assign.", "error"); console.error(err); }
+  finally {
+    btn.disabled = false;
+    // Reset modal state
+    resetTaskModal();
+    assignTargetId = null;
+  }
+}
+
+function resetTaskModal() {
+  document.getElementById("taskModalTitle").textContent = "New Task";
+  document.getElementById("taskTitle").closest(".form-group").style.display = "";
+  document.getElementById("taskDesc").closest(".form-group").style.display  = "";
+  document.getElementById("createTaskBtn").textContent = "Add Task";
+  document.getElementById("createTaskBtn").onclick = null;
+  document.getElementById("createTaskBtn").addEventListener("click", createTask);
 }
 
 // ── Milestones ─────────────────────────────────────────────────────────────────
 
-async function loadMilestones() {
+// Pass forceOpen to guarantee certain milestones are open after a re-render
+// (e.g. the one a task was just added to).
+async function loadMilestones(forceOpen = null) {
+  const openBefore = forceOpen ?? getOpenMilestones(); // capture BEFORE clearing DOM
+
   const list = document.getElementById("milestoneList");
   list.innerHTML = `<div class="page-loader"><div class="spinner"></div></div>`;
 
-  const snap = await getDocs(query(msCol(), orderBy("createdAt")));
+  const snap       = await getDocs(query(msCol(), orderBy("createdAt")));
   const milestones = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
   document.getElementById("milestoneCount").textContent = milestones.length;
@@ -273,6 +406,8 @@ async function loadMilestones() {
     const tasks   = msTasks.docs.map(d => ({ id: d.id, ...d.data() }));
     list.insertAdjacentHTML("beforeend", milestoneRow(ms, tasks));
   }
+
+  restoreOpenMilestones(openBefore); // restore AFTER re-render
   attachMilestoneListeners();
 }
 
@@ -280,23 +415,29 @@ function milestoneRow(ms, tasks) {
   const progress = ms.progress ?? 0;
   const dClass   = deadlineClass(ms.expectedEndDate);
   const dLabel   = deadlineLabel(ms.expectedEndDate);
-  const pColor   = progressColor(progress);
 
-  const taskRows = tasks.map(t => `
-    <div class="item-row" data-ms-task-id="${t.id}" data-ms-id="${ms.id}" style="background:var(--bg);">
-      <div class="item-checkbox ${t.complete ? "checked" : ""}" data-toggle-ms-task="${t.id}" data-ms-id="${ms.id}"></div>
-      <div class="item-body">
-        <div class="item-title ${t.complete ? "done" : ""}">${escHtml(t.title)}</div>
-        ${t.description ? `<div class="item-desc">${escHtml(t.description)}</div>` : ""}
-      </div>
-      <div class="item-actions">
-        <button class="btn btn-ghost btn-sm" data-delete-ms-task="${t.id}" data-ms-id="${ms.id}">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
-          </svg>
-        </button>
-      </div>
-    </div>`).join("");
+  const taskRows = tasks.map(t => {
+    const assignee = t.assigneeId ? projectMembers.find(m => m.userId === t.assigneeId) : null;
+    const assigneeHtml = assignee
+      ? `<div class="avatar avatar-sm" style="flex-shrink:0;" title="${escHtml(`${assignee.name} ${assignee.surname}`)}">${initials(`${assignee.name} ${assignee.surname}`)}</div>`
+      : "";
+    return `
+      <div class="item-row" data-ms-task-id="${t.id}" data-ms-id="${ms.id}" style="background:var(--bg);">
+        <div class="item-checkbox ${t.complete ? "checked" : ""}" data-toggle-ms-task="${t.id}" data-ms-id="${ms.id}"></div>
+        <div class="item-body">
+          <div class="item-title ${t.complete ? "done" : ""}">${escHtml(t.title)}</div>
+          ${t.description ? `<div class="item-desc">${escHtml(t.description)}</div>` : ""}
+        </div>
+        ${assigneeHtml}
+        <div class="item-actions">
+          <button class="btn btn-ghost btn-sm" data-delete-ms-task="${t.id}" data-ms-id="${ms.id}">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+            </svg>
+          </button>
+        </div>
+      </div>`;
+  }).join("");
 
   return `
     <div class="milestone-row" data-ms-id="${ms.id}">
@@ -328,7 +469,7 @@ function milestoneRow(ms, tasks) {
             <polyline points="9 11 12 14 22 4"/>
             <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
           </svg>
-          ${tasks.filter(t=>t.complete).length}/${tasks.length} tasks
+          ${tasks.filter(t => t.complete).length}/${tasks.length} tasks
         </span>
       </div>
 
@@ -338,7 +479,7 @@ function milestoneRow(ms, tasks) {
           <span class="text-xs font-semibold">${progress}%</span>
         </div>
         <div class="progress-bar">
-          <div class="progress-fill ${pColor}" style="width:${progress}%"></div>
+          <div class="progress-fill ${progressColor(progress)}" style="width:${progress}%"></div>
         </div>
       </div>
 
@@ -350,7 +491,9 @@ function milestoneRow(ms, tasks) {
           </svg>
         </button>
         <button class="btn btn-ghost btn-sm" data-add-ms-task="${ms.id}">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
           Add task
         </button>
       </div>
@@ -362,49 +505,37 @@ function milestoneRow(ms, tasks) {
 }
 
 function attachMilestoneListeners() {
-  // Toggle subtasks visibility
   document.querySelectorAll("[data-ms-toggle]").forEach(btn => {
     btn.addEventListener("click", () => {
-      const container = document.getElementById(`ms-tasks-${btn.dataset.msToggle}`);
-      const isOpen = container.classList.toggle("open");
+      const panel  = document.getElementById(`ms-tasks-${btn.dataset.msToggle}`);
+      const isOpen = panel.classList.toggle("open");
       btn.classList.toggle("open", isOpen);
     });
   });
-
-  // Delete milestone
-  document.querySelectorAll("[data-delete-ms]").forEach(btn => {
-    btn.addEventListener("click", () => deleteMilestone(btn.dataset.deleteMs));
-  });
-
-  // Add sub-task
-  document.querySelectorAll("[data-add-ms-task]").forEach(btn => {
-    btn.addEventListener("click", () => openMsTaskModal(btn.dataset.addMsTask));
-  });
-
-  // Toggle sub-task
-  document.querySelectorAll("[data-toggle-ms-task]").forEach(el => {
-    el.addEventListener("click", () => toggleMilestoneTask(el.dataset.msId, el.dataset.toggleMsTask));
-  });
-
-  // Delete sub-task
-  document.querySelectorAll("[data-delete-ms-task]").forEach(btn => {
-    btn.addEventListener("click", () => deleteMilestoneTask(btn.dataset.msId, btn.dataset.deleteMsTask));
-  });
+  document.querySelectorAll("[data-delete-ms]").forEach(btn =>
+    btn.addEventListener("click", () => deleteMilestone(btn.dataset.deleteMs))
+  );
+  document.querySelectorAll("[data-add-ms-task]").forEach(btn =>
+    btn.addEventListener("click", () => openMsTaskModal(btn.dataset.addMsTask))
+  );
+  document.querySelectorAll("[data-toggle-ms-task]").forEach(el =>
+    el.addEventListener("click", () => toggleMilestoneTask(el.dataset.msId, el.dataset.toggleMsTask))
+  );
+  document.querySelectorAll("[data-delete-ms-task]").forEach(btn =>
+    btn.addEventListener("click", () => deleteMilestoneTask(btn.dataset.msId, btn.dataset.deleteMsTask))
+  );
 }
 
 function openNewMilestoneModal() {
-  ["msTitle","msDesc","msEndDate"].forEach(id => document.getElementById(id).value = "");
-  document.getElementById("msProgress").value = "0";
+  ["msTitle", "msDesc", "msEndDate"].forEach(id => document.getElementById(id).value = "");
   hideErr("msError");
   openModal("newMilestoneModal");
 }
 
 async function createMilestone() {
-  const title    = document.getElementById("msTitle").value.trim();
-  const desc     = document.getElementById("msDesc").value.trim();
-  const endDate  = document.getElementById("msEndDate").value;
-  const progress = parseInt(document.getElementById("msProgress").value) || 0;
-
+  const title   = document.getElementById("msTitle").value.trim();
+  const desc    = document.getElementById("msDesc").value.trim();
+  const endDate = document.getElementById("msEndDate").value;
   if (!title) { showErr("msError", "Milestone title is required."); return; }
 
   const btn = document.getElementById("createMilestoneBtn");
@@ -413,7 +544,7 @@ async function createMilestone() {
     await addDoc(msCol(), {
       title, description: desc || "",
       expectedEndDate: endDate || null,
-      progress: Math.min(100, Math.max(0, progress)),
+      progress: 0,
       createdAt: serverTimestamp(),
     });
     closeModal("newMilestoneModal");
@@ -424,92 +555,106 @@ async function createMilestone() {
 }
 
 async function deleteMilestone(msId) {
-  await deleteDoc(doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones", msId));
+  await deleteDoc(msDocRef(msId));
   showToast("Milestone deleted.", "error");
   await loadMilestones();
 }
 
-// Milestone Tasks
+// ── Milestone tasks ────────────────────────────────────────────────────────────
+
 function openMsTaskModal(msId) {
   currentMsId = msId;
   document.getElementById("msTaskTitle").value = "";
   document.getElementById("msTaskDesc").value  = "";
+  populateMemberSelects();
+  document.getElementById("msTaskAssignee").value = "";
   hideErr("msTaskError");
   openModal("msTaskModal");
 }
 
 async function createMilestoneTask() {
-  const title = document.getElementById("msTaskTitle").value.trim();
-  const desc  = document.getElementById("msTaskDesc").value.trim();
-  if (!title) { showErr("msTaskError", "Task title is required."); return; }
+  const title      = document.getElementById("msTaskTitle").value.trim();
+  const desc       = document.getElementById("msTaskDesc").value.trim();
+  const assigneeId = document.getElementById("msTaskAssignee").value;
+  if (!title)      { showErr("msTaskError", "Task title is required."); return; }
   if (!currentMsId) return;
 
-  const btn = document.getElementById("createMsTaskBtn");
-  btn.disabled = true;
+  const assignee = assigneeId ? projectMembers.find(m => m.userId === assigneeId) : null;
+  const btn      = document.getElementById("createMsTaskBtn");
+  btn.disabled   = true;
+  const msId     = currentMsId;
+
   try {
-    await addDoc(msTasksCol(currentMsId), {
-      title, description: desc || "", complete: false, createdAt: serverTimestamp(),
+    await addDoc(msTasksCol(msId), {
+      title, description: desc || "", complete: false,
+      assigneeId:   assigneeId || null,
+      assigneeName: assignee ? `${assignee.name} ${assignee.surname}` : null,
+      createdAt:    serverTimestamp(),
     });
     closeModal("msTaskModal");
     showToast("Task added!");
-    await loadMilestones();
+
+    // Recalculate progress and reload, ensuring this milestone stays open.
+    await recalcMilestoneProgress(msId);
+    const openSet = getOpenMilestones();
+    openSet.add(msId);          // keep the target milestone open
+    await loadMilestones(openSet);
   } catch(err) { showErr("msTaskError", "Failed to add task."); console.error(err); }
   finally { btn.disabled = false; currentMsId = null; }
 }
 
 async function toggleMilestoneTask(msId, taskId) {
-  const taskRef = doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones", msId, "tasks", taskId);
-  const snap = await getDoc(taskRef);
+  const ref  = doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones", msId, "tasks", taskId);
+  const snap = await getDoc(ref);
   if (!snap.exists()) return;
-  await updateDoc(taskRef, { complete: !snap.data().complete });
-  await loadMilestones();
+  await updateDoc(ref, { complete: !snap.data().complete });
+  // Recalculate milestone progress, then reload preserving open state.
+  await recalcMilestoneProgress(msId);
+  await loadMilestones(); // getOpenMilestones() called inside will capture current DOM state
 }
 
 async function deleteMilestoneTask(msId, taskId) {
   await deleteDoc(doc(db, "users", OWNER_UID, "projects", PROJECT_ID, "milestones", msId, "tasks", taskId));
   showToast("Task deleted.", "error");
+  await recalcMilestoneProgress(msId);
   await loadMilestones();
 }
 
-// ── Members ─────────────────────────────────────────────────────────────────────
+// ── Members ────────────────────────────────────────────────────────────────────
 
 async function loadMembers() {
   const list = document.getElementById("membersList");
   list.innerHTML = `<div class="page-loader"><div class="spinner"></div></div>`;
 
-  const snap = await getDocs(membersCol());
+  const snap    = await getDocs(membersCol());
   const members = snap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-  // Always show the owner first
   const ownerProfile = await getUserProfile(OWNER_UID);
-  const totalCount   = members.length + 1; // +1 for owner
+  const totalCount   = members.length + 1;
 
   document.getElementById("memberCount").textContent = totalCount;
   document.getElementById("statMembers").textContent = totalCount;
 
-  let html = "";
-
+  // Rebuild projectMembers cache (owner first, then added members)
+  projectMembers = [];
   if (ownerProfile) {
-    const fullName = `${ownerProfile.name} ${ownerProfile.surname}`;
-    html += memberRowHtml({
-      id: OWNER_UID,
-      name: ownerProfile.name,
+    projectMembers.push({
+      userId:  OWNER_UID,
+      name:    ownerProfile.name,
       surname: ownerProfile.surname,
-      email: ownerProfile.email,
-      isOwner: true,
+      email:   ownerProfile.email,
     });
   }
-
   for (const m of members) {
-    html += memberRowHtml(m);
+    projectMembers.push({ userId: m.userId, name: m.name, surname: m.surname, email: m.email });
   }
 
-  if (!html) {
-    list.innerHTML = emptyState("No members yet", "Add team members by their email.", "member");
-    return;
-  }
+  let html = ownerProfile
+    ? memberRowHtml({ id: OWNER_UID, name: ownerProfile.name, surname: ownerProfile.surname, email: ownerProfile.email, isOwner: true })
+    : "";
+  for (const m of members) html += memberRowHtml(m);
 
-  list.innerHTML = html;
+  list.innerHTML = html || emptyState("No members yet", "Add team members by their email.", "member");
   attachMemberListeners();
 }
 
@@ -526,7 +671,7 @@ function memberRowHtml(m) {
       <span class="badge ${isOwner ? "badge-primary" : "badge-gray"}">${isOwner ? "Owner" : "Member"}</span>
       ${!isOwner ? `
         <div class="member-actions">
-          <button class="btn btn-ghost btn-sm" data-remove-member="${m.id}" title="Remove member" style="color:var(--danger)">
+          <button class="btn btn-ghost btn-sm" data-remove-member="${m.id}" title="Remove" style="color:var(--danger)">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
             </svg>
@@ -536,9 +681,9 @@ function memberRowHtml(m) {
 }
 
 function attachMemberListeners() {
-  document.querySelectorAll("[data-remove-member]").forEach(btn => {
-    btn.addEventListener("click", () => removeMember(btn.dataset.removeMember));
-  });
+  document.querySelectorAll("[data-remove-member]").forEach(btn =>
+    btn.addEventListener("click", () => removeMember(btn.dataset.removeMember))
+  );
 }
 
 function openAddMemberModal() {
@@ -555,88 +700,57 @@ async function lookupMember() {
   const email = document.getElementById("memberEmail").value.trim().toLowerCase();
   if (!email) { showErr("memberError", "Please enter an email address."); return; }
 
-  document.getElementById("lookupMemberBtn").textContent = "Searching…";
-  document.getElementById("lookupMemberBtn").disabled = true;
+  const lookupBtn = document.getElementById("lookupMemberBtn");
+  lookupBtn.textContent = "Searching…";
+  lookupBtn.disabled    = true;
   hideErr("memberError");
-  document.getElementById("memberLookupResult").style.display = "none";
-  document.getElementById("confirmAddMemberBtn").style.display = "none";
+  document.getElementById("memberLookupResult").style.display    = "none";
+  document.getElementById("confirmAddMemberBtn").style.display   = "none";
 
   try {
-    // Query users collection by email
-    const q    = query(collection(db, "users"), where("email", "==", email));
-    const snap = await getDocs(q);
-
-    if (snap.empty) {
-      showErr("memberError", "No Sync-Up account found with that email.");
-      foundMember = null;
-      return;
-    }
+    const snap = await getDocs(query(collection(db, "users"), where("email", "==", email)));
+    if (snap.empty) { showErr("memberError", "No Sync-Up account found with that email."); foundMember = null; return; }
 
     const userDoc = snap.docs[0];
-    foundMember = { uid: userDoc.id, ...userDoc.data() };
+    foundMember   = { uid: userDoc.id, ...userDoc.data() };
 
     if (foundMember.uid === currentUser.uid) {
-      showErr("memberError", "You are already the project owner.");
-      foundMember = null;
-      return;
+      showErr("memberError", "You are already the project owner."); foundMember = null; return;
     }
-
-    // Check if already a member
-    const existingSnap = await getDocs(
-      query(membersCol(), where("userId", "==", foundMember.uid))
-    );
-    if (!existingSnap.empty) {
-      showErr("memberError", "This person is already a member of this project.");
-      foundMember = null;
-      return;
+    const existing = await getDocs(query(membersCol(), where("userId", "==", foundMember.uid)));
+    if (!existing.empty) {
+      showErr("memberError", "This person is already a member."); foundMember = null; return;
     }
 
     const fullName = `${foundMember.name} ${foundMember.surname}`;
-    document.getElementById("memberPreviewName").textContent  = fullName;
-    document.getElementById("memberPreviewEmail").textContent = foundMember.email;
+    document.getElementById("memberPreviewName").textContent   = fullName;
+    document.getElementById("memberPreviewEmail").textContent  = foundMember.email;
     document.getElementById("memberPreviewAvatar").textContent = initials(fullName);
-    document.getElementById("memberLookupResult").style.display = "";
+    document.getElementById("memberLookupResult").style.display  = "";
     document.getElementById("confirmAddMemberBtn").style.display = "";
-
-  } catch(err) {
-    showErr("memberError", "Lookup failed. Please try again.");
-    console.error(err);
-  } finally {
-    document.getElementById("lookupMemberBtn").textContent = "Look up";
-    document.getElementById("lookupMemberBtn").disabled = false;
-  }
+  } catch(err) { showErr("memberError", "Lookup failed. Please try again."); console.error(err); }
+  finally { lookupBtn.textContent = "Look up"; lookupBtn.disabled = false; }
 }
 
 async function addMember() {
   if (!foundMember) return;
-
   const btn = document.getElementById("confirmAddMemberBtn");
   btn.disabled = true;
   try {
     await addDoc(membersCol(), {
-      userId:  foundMember.uid,
-      email:   foundMember.email,
-      name:    foundMember.name,
-      surname: foundMember.surname,
-      addedAt: serverTimestamp(),
+      userId: foundMember.uid, email: foundMember.email,
+      name: foundMember.name, surname: foundMember.surname, addedAt: serverTimestamp(),
     });
-
-    // Also write a back-reference on the member's user doc so they can find this project
     await addDoc(
       collection(db, "users", foundMember.uid, "memberOf"),
       { ownerUid: OWNER_UID, projectId: PROJECT_ID, projectTitle: projectData?.title || "" }
     );
-
     closeModal("addMemberModal");
     showToast(`${foundMember.name} added to the project!`);
     foundMember = null;
     await loadMembers();
-  } catch(err) {
-    showErr("memberError", "Failed to add member.");
-    console.error(err);
-  } finally {
-    btn.disabled = false;
-  }
+  } catch(err) { showErr("memberError", "Failed to add member."); console.error(err); }
+  finally { btn.disabled = false; }
 }
 
 async function removeMember(docId) {
@@ -648,25 +762,22 @@ async function removeMember(docId) {
 // ── Edit Project ───────────────────────────────────────────────────────────────
 
 function openEditModal() {
-  document.getElementById("editProjTitle").value    = projectData.title || "";
-  document.getElementById("editProjDesc").value     = projectData.description || "";
-  document.getElementById("editProjDue").value      = projectData.dueDate || "";
-  document.getElementById("editProjProgress").value = projectData.progress ?? 0;
+  document.getElementById("editProjTitle").value = projectData.title || "";
+  document.getElementById("editProjDesc").value  = projectData.description || "";
+  document.getElementById("editProjDue").value   = projectData.dueDate || "";
   openModal("editProjectModal");
 }
 
 async function saveProject() {
-  const title    = document.getElementById("editProjTitle").value.trim();
-  const desc     = document.getElementById("editProjDesc").value.trim();
-  const due      = document.getElementById("editProjDue").value;
-  const progress = Math.min(100, Math.max(0, parseInt(document.getElementById("editProjProgress").value) || 0));
-
+  const title = document.getElementById("editProjTitle").value.trim();
+  const desc  = document.getElementById("editProjDesc").value.trim();
+  const due   = document.getElementById("editProjDue").value;
   if (!title) return;
 
   const btn = document.getElementById("saveProjectBtn");
   btn.disabled = true;
   try {
-    await updateDoc(projRef(), { title, description: desc || "", dueDate: due || null, progress });
+    await updateDoc(projRef(), { title, description: desc || "", dueDate: due || null });
     closeModal("editProjectModal");
     showToast("Project updated!");
     await loadProject();
@@ -674,20 +785,18 @@ async function saveProject() {
   finally { btn.disabled = false; }
 }
 
-// ── Empty State Helper ─────────────────────────────────────────────────────────
+// ── Empty state ────────────────────────────────────────────────────────────────
 
 function emptyState(title, subtitle, type) {
   const icons = {
-    task: `<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>`,
+    task:      `<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="13" y2="16"/>`,
     milestone: `<path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="M13 13l6 6"/>`,
-    member: `<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>`,
+    member:    `<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>`,
   };
   return `
     <div class="empty-state" style="grid-column:unset;">
       <div class="empty-state-icon">
-        <svg viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          ${icons[type] || ""}
-        </svg>
+        <svg viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${icons[type] || ""}</svg>
       </div>
       <h3>${title}</h3>
       <p class="text-sm">${subtitle}</p>
